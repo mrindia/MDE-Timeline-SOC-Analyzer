@@ -229,6 +229,7 @@ $users = $csv | Where-Object { $_.'Account Name' -ne '' } |
 # 10. Logon events
 $logonSuccess = Get-FindingsByAction -ActionTypes @('LogonSuccess') -Data $csv
 $logonFailed  = Get-FindingsByAction -ActionTypes @('LogonFailed') -Data $csv
+$logoffEvents = Get-FindingsByAction -ActionTypes @('LogoffSuccess','Logoff') -Data $csv
 
 Write-Host "[*] Building severity scores..." -ForegroundColor Yellow
 
@@ -431,6 +432,44 @@ foreach ($u in ($users | Select-Object -First 15)) {
 "@
 }
 
+# Build logon/logoff detail rows
+$logonLogoffRows = ""
+foreach ($ll in ($logonLogoffAll | Select-Object -First 30)) {
+    $typeColor = switch ($ll.Type) { 'Logon Success' { '#3fb950' } 'Logon Failed' { '#f85149' } 'Logoff' { '#8b949e' } default { '#e6edf3' } }
+    $logonLogoffRows += @"
+      <tr>
+        <td class="mono">$(HtmlEncode $ll.Time)</td>
+        <td style="color:$typeColor;font-weight:600;">$(HtmlEncode $ll.Type)</td>
+        <td>$(HtmlEncode $ll.User)</td>
+      </tr>
+"@
+}
+
+# 11. Logon/Logoff detail for user activity section
+$logonLogoffAll = @()
+foreach ($e in @($logonSuccess)) {
+    $logonLogoffAll += [PSCustomObject]@{
+        Time = $e.'Event Time'
+        Type = 'Logon Success'
+        User = "$($e.'Account Domain')\$($e.'Account Name')"
+    }
+}
+foreach ($e in @($logonFailed)) {
+    $logonLogoffAll += [PSCustomObject]@{
+        Time = $e.'Event Time'
+        Type = 'Logon Failed'
+        User = "$($e.'Account Domain')\$($e.'Account Name')"
+    }
+}
+foreach ($e in @($logoffEvents)) {
+    $logonLogoffAll += [PSCustomObject]@{
+        Time = $e.'Event Time'
+        Type = 'Logoff'
+        User = "$($e.'Account Domain')\$($e.'Account Name')"
+    }
+}
+$logonLogoffAll = $logonLogoffAll | Sort-Object Time
+
 # Risk gauge color
 $riskColor = $sevColors[$riskLabel]
 
@@ -494,7 +533,7 @@ $html = @"
 <h1>🛡️ SOC Threat Analysis Report</h1>
 <div class="meta">
   <span><strong>Device:</strong> $deviceName</span>
-  <span><strong>Machine ID:</strong> $(($machineId).Substring(0, [math]::Min(12, $machineId.Length)))...</span>
+  <span><strong>Machine ID:</strong> $(if ($machineId) { $machineId.Substring(0, [math]::Min(12, $machineId.Length)) + '...' } else { 'N/A' })</span>
   <span><strong>Period:</strong> $($timeRange.Start) — $($timeRange.End)</span>
   <span><strong>Generated:</strong> $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</span>
 </div>
@@ -550,7 +589,17 @@ $findingsHtml
   <thead><tr><th>User</th><th>Events</th></tr></thead>
   <tbody>$userRows</tbody>
 </table>
-<p class="muted">Logon successes: $(@($logonSuccess).Count) | Logon failures: $(@($logonFailed).Count)</p>
+<p class="muted">Logon successes: $(@($logonSuccess).Count) | Logon failures: $(@($logonFailed).Count) | Logoff events: $(@($logoffEvents).Count)</p>
+</div>
+
+<!-- Logon / Logoff Details -->
+<h2>🔐 Logon &amp; Logoff Activity</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Time</th><th>Event</th><th>User</th></tr></thead>
+  <tbody>$logonLogoffRows</tbody>
+</table>
+<p class="muted">Showing up to 30 logon/logoff events sorted by time.</p>
 </div>
 
 <!-- Action Type Breakdown -->
@@ -575,6 +624,8 @@ $html | Out-File -FilePath $OutputPath -Encoding UTF8
 $stopwatch.Stop()
 
 Write-Host "[*] Report saved to: $OutputPath" -ForegroundColor Green
+Write-Host "[*] Opening report in browser..." -ForegroundColor Cyan
+Start-Process $OutputPath
 Write-Host "[*] Completed in $([math]::Round($stopwatch.Elapsed.TotalSeconds, 1)) seconds.`n" -ForegroundColor Cyan
 
 # ─────────────────────────────────────────────
